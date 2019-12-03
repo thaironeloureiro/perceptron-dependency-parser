@@ -4,11 +4,14 @@ import multiprocessing as mp
 
 import numpy as np
 
+import dependencytree
+
 from perceptron import ArcPerceptron, LabPerceptron
 from decode import Decoder
 from features import get_features
 from parallel import parse_parallel
 from utils import softmax
+
 
 
 class DependencyParser:
@@ -39,7 +42,112 @@ class DependencyParser:
                 all_features[i][j] = features
         probs = softmax(score_matrix)
         heads = self.decoder(probs)
+        #heads = self.first_order_proj_approx(heads, probs.T)
+        heads = self.first_order_proj_approx_beam(heads, probs.T)
         return heads, probs, all_features
+
+    def score_heads(self, heads, probs):
+        value_proj = 0.0
+        for m in range(1, len(heads)):
+            h = heads[m]
+            value_proj += probs[h, m]
+        return value_proj
+    
+    def first_order_proj_approx(self, heads, probs):
+        M = 10
+        while True:
+            m = float('-inf')
+            c = p = -1
+            n = len(heads)
+            heads_score = self.score_heads(heads, probs)
+            for j in range(1, n):
+                for i in range(0, n):
+                    heads_prime = dependencytree.transform(heads, i, j)
+                    if not dependencytree.is_tree(heads_prime):
+                        continue
+                    delta_score = self.score_heads(heads_prime, probs) - heads_score
+                    if delta_score > m:
+                        m = delta_score
+                        c = j
+                        p = i
+            if m > 0:
+                heads = dependencytree.transform(heads, p, c)
+            else:
+                return heads
+            count_transformations += 1
+            if count_transformations >= M:
+                return heads
+
+    def get_score(self, item):
+        return item[1]
+
+    def next_best_heads(self, heads, probs):
+        m = float('-inf')
+        c = p = -1
+        n = len(heads)
+        heads_score = self.score_heads(heads, probs)
+        for j in range(1, n):
+            for i in range(0, n):
+                heads_prime = dependencytree.transform(heads, i, j)
+                if not dependencytree.is_tree(heads_prime):
+                    continue
+                delta_score = self.score_heads(heads_prime, probs) - heads_score
+                if delta_score > m:
+                    m = delta_score
+                    c = j
+                    p = i
+        if m > 0:
+            return dependencytree.transform(heads, p, c)
+        else:
+            return heads
+            
+    def first_order_proj_approx_beam(self, heads, probs):
+        M = 10
+        LIMIT_HEURISTIC = 3
+        count_transformations = 0
+        heads_score = self.score_heads(heads, probs)
+        cid = 1
+        count_heuristic = 1
+        partial_heads = [[heads, heads_score, cid], [heads, heads_score, cid], [heads, heads_score, cid]]
+        n = len(heads)
+
+        heads = partial_heads[0][0]
+        for j in range(1, n):
+            for i in range(0, n):
+                heads_prime = dependencytree.transform(heads, i, j)
+                if not dependencytree.is_tree(heads_prime):
+                    continue
+                score_heads_prime = self.score_heads(heads_prime, probs)
+                delta_score = score_heads_prime - partial_heads[-1][1]
+                if delta_score > 0:
+                    cid += 1
+                    partial_heads[-1] = [heads_prime, score_heads_prime, cid]
+                    partial_heads = sorted(partial_heads, key=self.get_score)
+        set_cids = {partial_heads[0][2], partial_heads[1][2], partial_heads[2][2]}        
+        while True:
+            set_cids = {partial_heads[0][2], partial_heads[1][2], partial_heads[2][2]}
+            heads = partial_heads[0][0]
+            for i in range(0, len(partial_heads)):
+                heads_prime = self.next_best_heads(partial_heads[i][0], probs)
+                score_heads_prime = self.score_heads(heads_prime, probs)
+                delta_score = score_heads_prime - partial_heads[i][1]
+                if delta_score > 0:
+                    cid += 1
+                    partial_heads[-1] = [heads_prime, score_heads_prime, cid] #-1
+                    partial_heads = sorted(partial_heads, key=self.get_score)
+            
+            if not set([item[2] for item in partial_heads]).difference(set_cids):
+                if count_heuristic >= LIMIT_HEURISTIC :
+                    return partial_heads[0][0]
+                else:
+                    count_heuristic += 1
+            else:
+                count_heuristic = 1
+            count_transformations += 1
+            if count_transformations >= M:
+                return partial_heads[0][0]
+
+    
 
     def train(self, niters, train_set, dev_set, approx=100, structured=None):
         # TODO: no structured training yet.
@@ -108,7 +216,7 @@ class DependencyParser:
         assert isinstance(accuracy, dict), accuracy
         self.arc_accuracy = accuracy
         self.arc_perceptron.save(
-            path, data_path=data_path, epochs_trained=epochs_trained, accuracy=self.arc_accuracy)
+            path, data=data_path, epochs=epochs_trained, accuracy=self.arc_accuracy)
 
     def load(self, path, training=False):
         accuracy, feature_opts = self.arc_perceptron.load(path, training)

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 __author__ = 'Daan van Stigt'
 
 import argparse
@@ -103,9 +103,10 @@ def train(args):
     print(f'Number of pruned weights: {len(model.weights):,}.')
 
     print(f'Saving model to `{args.model}`...')
+    data_dir = os.path.expanduser(args.data)
     data_path = os.path.join(data_dir, UD_LANG[args.lang]) if not args.use_ptb else args.data
     model.save(
-        args.model, data=data_path, epochs=args.epochs, accuracy=dict(dev=round(dev_acc, 2)))
+        args.model, data_path=data_path, epochs_trained=args.epochs, accuracy=dict(dev=round(dev_acc, 2)))
 
     print()
     print('Producing predictions in conll format and final evaluation...')

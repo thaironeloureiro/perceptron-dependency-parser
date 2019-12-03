@@ -57,7 +57,9 @@ class UToken(Token):
       misc: any other annotation
     """
     self.str_id = tid  # Use this for printing the conll
-    self.id = int(float(tid))  # Use this for training TODO: what is this 10.1 business?
+    #print(self.str_id)
+    l_tid = str(tid).split('-')
+    self.id = int(float(l_tid[0])) if len(l_tid) > 1 and l_tid[0] else int(float(tid))   # Use this for training TODO: what is this 10.1 business?
     self.form = form
     self.lemma = lemma
     self.upos = upos
